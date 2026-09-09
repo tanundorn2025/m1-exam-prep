@@ -1,0 +1,24 @@
+name: Supabase Keepalive
+
+# Pings the Supabase database every 3 days so it never hits Supabase's
+# 7-day free-tier inactivity pause. Free, automatic, no extra services.
+
+on:
+  schedule:
+    - cron: '0 3 */3 * *'   # every 3 days at 03:00 UTC
+  workflow_dispatch: {}      # lets you also trigger it manually from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase database
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://mbwkslgkiiqpfeqslqcu.supabase.co/rest/v1/subjects?select=id&limit=1" \
+            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id2tzbGdraWlxcGZlcXNscWN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MDMwNDEsImV4cCI6MjEwMjE3OTA0MX0.WVreyl-NVB3_uHxS4yVeDyey17YWdN99eBjcpv9YmGk" \
+            -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id2tzbGdraWlxcGZlcXNscWN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MDMwNDEsImV4cCI6MjEwMjE3OTA0MX0.WVreyl-NVB3_uHxS4yVeDyey17YWdN99eBjcpv9YmGk")
+          echo "Supabase responded with HTTP $STATUS"
+          if [ "$STATUS" -ge 400 ]; then
+            echo "::warning::Supabase ping returned an error status ($STATUS) — check the project isn't already paused."
+          fi
