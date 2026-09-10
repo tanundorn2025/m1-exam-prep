@@ -1234,9 +1234,10 @@ async function openParentDashboard(){
     allQuestions.forEach(q=>{ if(byTopic[q.topic_id]) byTopic[q.topic_id][q.mode].total++; });
 
     let examHistory = [];
+    let activityLog = [];
     if(state.parentStudent){
       const [myProgress, myExams] = await Promise.all([
-        sbGet(`progress?student_name=eq.${encodeURIComponent(state.parentStudent)}&select=question_id,submitted_answer,is_correct,revealed,mode`),
+        sbGet(`progress?student_name=eq.${encodeURIComponent(state.parentStudent)}&select=question_id,submitted_answer,is_correct,revealed,mode,updated_at`),
         sbGet(`exam_results?student_name=eq.${encodeURIComponent(state.parentStudent)}&select=topic_id,score,total,created_at&order=created_at.desc&limit=20`),
       ]);
       myProgress.forEach(p=>{
@@ -1246,11 +1247,27 @@ async function openParentDashboard(){
           if(p.is_correct) byTopic[q.topic_id][q.mode].correct++;
         }
       });
+      const topicMap = {}; state.topics.forEach(t=>{ topicMap[t.id]=t; });
+      const subjectMap = {}; state.subjects.forEach(s=>{ subjectMap[s.id]=s; });
+      activityLog = myProgress
+        .filter(p=> p.submitted_answer!==null && p.submitted_answer!==undefined && p.submitted_answer!=='' && p.updated_at)
+        .map(p=>{
+          const q = qMap[p.question_id];
+          const t = q ? topicMap[q.topic_id] : null;
+          const s = t ? subjectMap[t.subject_id] : null;
+          return {
+            topic_name: t ? t.name_th : 'ไม่ทราบหัวข้อ',
+            subject_name: s ? s.name_th : '',
+            mode: p.mode, is_correct: p.is_correct, updated_at: p.updated_at,
+          };
+        })
+        .sort((a,b)=> new Date(b.updated_at) - new Date(a.updated_at))
+        .slice(0, 50);
       examHistory = myExams;
     }
-    state.parentData = { students, byTopic, examHistory };
+    state.parentData = { students, byTopic, examHistory, activityLog };
   }catch(e){
-    state.parentData = { students:[studentName].filter(Boolean), byTopic:{}, examHistory:[], error:e.message };
+    state.parentData = { students:[studentName].filter(Boolean), byTopic:{}, examHistory:[], activityLog:[], error:e.message };
   }
   state.screen = 'parent';
   render();
@@ -1378,6 +1395,36 @@ function renderParentDashboard(){
       histCard.appendChild(row);
     });
     app.appendChild(histCard);
+  }
+
+  // per-question activity log — exactly which question, which day, what time
+  if(data.activityLog && data.activityLog.length){
+    const actCard = document.createElement('div'); actCard.className='card';
+    actCard.innerHTML = `<div class="holes"><span></span><span></span><span></span><span></span></div>
+      <h3 style="margin-bottom:4px">🕒 กิจกรรมล่าสุด</h3>
+      <div class="subtitle" style="color:var(--ink-soft);margin:0 0 10px">ทำข้อไหน วันไหน เวลาไหน — ${escapeHtml(state.parentStudent)}</div>`;
+    let lastDateLabel = null;
+    data.activityLog.forEach(a=>{
+      const d = new Date(a.updated_at);
+      const dateLabel = d.toLocaleDateString('th-TH', {weekday:'short', day:'numeric', month:'short', year:'2-digit'});
+      const timeLabel = d.toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit'});
+      if(dateLabel !== lastDateLabel){
+        const dateHead = document.createElement('div');
+        dateHead.style.cssText = 'font-family:\'Kanit\';font-weight:700;font-size:12.5px;color:var(--marigold-dark);margin-top:14px;margin-bottom:4px;';
+        dateHead.textContent = dateLabel;
+        actCard.appendChild(dateHead);
+        lastDateLabel = dateLabel;
+      }
+      const modeLabel = a.mode === 'exam' ? '📝 ข้อสอบ' : '✏️ ฝึกหัด';
+      const resultIcon = a.is_correct ? '✅' : '❌';
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:1px solid var(--paper-line);font-size:13px;gap:8px;';
+      row.innerHTML = `
+        <span>${resultIcon} ${modeLabel} — ${escapeHtml(a.subject_name)}${a.subject_name?' · ':''}${escapeHtml(a.topic_name)}</span>
+        <span style="color:var(--ink-soft);white-space:nowrap">${timeLabel} น.</span>`;
+      actCard.appendChild(row);
+    });
+    app.appendChild(actCard);
   }
 }
 
