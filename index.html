@@ -234,6 +234,8 @@ sup{font-size:0.66em;font-weight:700;top:-0.55em;}
 .topic-item .meta-wrap{flex:1;}
 .progress-pills{display:flex;gap:6px;margin-top:5px;}
 .pill{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:#f1ede0;color:var(--ink-soft);}
+.pill-clickable{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px;}
+.pill-clickable:hover{background:#fff0c2;}
 .pill.done{background:#e7f5ec;color:var(--good);}
 .mode-card .prog-pill{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#f1ede0;color:var(--ink-soft);}
 .mode-card .prog-pill.done{background:#e7f5ec;color:var(--good);}
@@ -269,6 +271,7 @@ let state = {
   topicStats: {},              // topic_id -> {exercise:{done,total}, exam:{done,total}}
   parentStudent: null,
   parentData: null,
+  reviewBackFn: null, reviewLabel: null, reviewIsWrongOnly: false, reviewSkipPin: false,
 };
 
 const app = document.getElementById('app');
@@ -328,8 +331,11 @@ async function fetchTopicStats(topics){
   if(studentName){
     const qMap = {}; questions.forEach(q=>{ qMap[q.id]=q; });
     // fetch by student only (no per-question id list) so the URL never grows with the size of the question bank
-    const rows = await sbGet(`progress?student_name=eq.${encodeURIComponent(studentName)}&submitted_answer=not.is.null&select=question_id`);
-    rows.forEach(r=>{ const q = qMap[r.question_id]; if(q && stats[q.topic_id]) stats[q.topic_id][q.mode].done++; });
+    const rows = await sbGet(`progress?student_name=eq.${encodeURIComponent(studentName)}&submitted_answer=not.is.null&select=question_id,submitted_answer`);
+    rows.forEach(r=>{
+      if(r.submitted_answer===null || r.submitted_answer===undefined || r.submitted_answer==='') return; // exclude empty-string answers too, not just NULL
+      const q = qMap[r.question_id]; if(q && stats[q.topic_id]) stats[q.topic_id][q.mode].done++;
+    });
   }
   return stats;
 }
@@ -529,13 +535,18 @@ function renderHomeScreen(){
         const st = state.topicStats && state.topicStats[t.id];
         if(st){ sDone += st.exercise.done + st.exam.done; sTotal += st.exercise.total + st.exam.total; }
       });
-      if(sTotal>0) donePill = `<div class="progress-pills"><span class="pill ${sDone>=sTotal?'done':''}">ทำแล้ว ${sDone}/${sTotal} ข้อ</span></div>`;
+      if(sTotal>0) donePill = `<div class="progress-pills"><span class="pill pill-clickable ${sDone>=sTotal?'done':''}" title="ดูข้อที่ผิด">ทำแล้ว ${sDone}/${sTotal} ข้อ 🔍</span></div>`;
     }catch(e){ /* fall back to no progress pill for this subject */ }
     const card = document.createElement('div');
     card.className = 'subject-card';
     card.innerHTML = `<div class="tag">${topicsOf.length} เรื่อง</div><h3>${escapeHtml(s.name_th)}</h3>
       <div class="count">แบบฝึกหัด + ข้อสอบจำลอง</div>${donePill}`;
     card.onclick = ()=>goToTopicScreen(s);
+    const pillEl = card.querySelector('.pill-clickable');
+    if(pillEl) pillEl.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      askPinThen(()=> reviewWrongAnswers(topicsOf.map(t=>t.id), studentName, s.name_th, ()=>{ state.screen='home'; render(); }, false));
+    });
     grid.appendChild(card);
   });
   wrap.appendChild(grid);
@@ -572,12 +583,20 @@ function renderTopicScreen(){
       const exDone = st.exercise.done>=st.exercise.total && st.exercise.total>0;
       const xmDone = st.exam.done>=st.exam.total && st.exam.total>0;
       pills = `<div class="progress-pills">
-        <span class="pill ${exDone?'done':''}">✏️ ${st.exercise.done}/${st.exercise.total}</span>
-        <span class="pill ${xmDone?'done':''}">📝 ${st.exam.done}/${st.exam.total}</span>
+        <span class="pill pill-clickable ${exDone?'done':''}" data-mode="exercise" title="ดูข้อที่ผิด">✏️ ${st.exercise.done}/${st.exercise.total} 🔍</span>
+        <span class="pill pill-clickable ${xmDone?'done':''}" data-mode="exam" title="ดูข้อที่ผิด">📝 ${st.exam.done}/${st.exam.total} 🔍</span>
       </div>`;
     }
     item.innerHTML = `<div class="num">${i+1}</div><div class="meta-wrap"><div class="name">${escapeHtml(t.name_th)}</div>${pills}</div><div class="go">เลือก →</div>`;
     item.onclick = ()=>{ state.currentTopic = t; state.screen='modepick'; render(); };
+    item.querySelectorAll('.pill-clickable').forEach(pillEl=>{
+      pillEl.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        const mode = pillEl.dataset.mode;
+        const modeLabel = mode === 'exam' ? 'ข้อสอบจำลอง' : 'แบบฝึกหัด';
+        askPinThen(()=> reviewWrongAnswers([t.id], studentName, `${t.name_th} (${modeLabel})`, goHome, false, mode));
+      });
+    });
     list.appendChild(item);
   });
   app.appendChild(list);
@@ -642,6 +661,7 @@ async function resetTopicProgress(topic){
 async function startMode(mode){
   state.currentMode = mode;
   state.screen = 'loading'; render();
+  state.reviewBackFn = null; state.reviewLabel = null; state.reviewIsWrongOnly = false; state.reviewSkipPin = false;
   try{
     const qs = await sbGet(`questions?topic_id=eq.${state.currentTopic.id}&mode=eq.${mode}&select=*&order=order_no`);
     state.questions = qs;
@@ -1091,8 +1111,43 @@ function setupScratchPad(q){
 }
 
 // ---------- exam submit / result ----------
+// Shows only the questions a student got wrong or never answered, across one or more topics.
+// skipPin=true when called from an already-authenticated context (e.g. inside the Parent Dashboard).
+async function reviewWrongAnswers(topicIds, forStudent, label, backFn, skipPin, modeFilter){
+  state.screen = 'loading'; render();
+  try{
+    const modeQS = modeFilter ? `&mode=eq.${modeFilter}` : '';
+    const qs = await sbGet(`questions?topic_id=in.(${topicIds.join(',')})${modeQS}&select=*&order=topic_id,mode,order_no`);
+    if(qs.length === 0){ alert('ยังไม่มีข้อในหัวข้อนี้'); backFn(); return; }
+    const qids = qs.map(q=>q.id);
+    const rows = await sbGet(`progress?student_name=eq.${encodeURIComponent(forStudent)}&question_id=in.(${qids.join(',')})&select=question_id,submitted_answer`);
+    const ansMap = {}; rows.forEach(r=>{ if(r.submitted_answer!==null && r.submitted_answer!==undefined && r.submitted_answer!=='') ansMap[r.question_id]=r.submitted_answer; });
+    const wrongOnes = qs.filter(q=>{
+      const submitted = (ansMap[q.id]||'').toString().trim();
+      return normalize(submitted) !== normalize(q.correct_answer);
+    });
+    if(wrongOnes.length === 0){ alert('เยี่ยมมาก! ไม่มีข้อที่ตอบผิดเลยในส่วนนี้ 🎉'); backFn(); return; }
+    state.reviewBackFn = backFn;
+    state.reviewLabel = label;
+    state.reviewIsWrongOnly = true;
+    state.reviewSkipPin = !!skipPin;
+    state.currentMode = 'exercise';
+    state.questions = wrongOnes;
+    state.answers = {}; wrongOnes.forEach(q=>{ if(ansMap[q.id]) state.answers[q.id]=ansMap[q.id]; });
+    state.revealed = {}; state.revealOpen = {};
+    state.examSubmitted = true;
+    state.examScore = { correct: 0, total: wrongOnes.length };
+    state.screen = 'examresult';
+  }catch(e){
+    alert('โหลดไม่สำเร็จ: ' + e.message);
+    backFn();
+  }
+  render();
+}
+
 async function runExerciseSummary(){
   state.screen = 'loading'; render();
+  state.reviewBackFn = null; state.reviewLabel = null; state.reviewIsWrongOnly = false; state.reviewSkipPin = false;
   try{
     const qs = await sbGet(`questions?topic_id=eq.${state.currentTopic.id}&mode=eq.exercise&select=*&order=order_no`);
     if(qs.length === 0){
@@ -1148,17 +1203,22 @@ async function submitExam(){
 
 function renderExamResult(){
   const back = document.createElement('div');
-  back.className='link-back'; back.textContent='← กลับไปเลือกโหมด';
-  back.onclick = goToModePick;
+  back.className='link-back'; back.textContent = state.reviewBackFn ? '← กลับ' : '← กลับไปเลือกโหมด';
+  back.onclick = state.reviewBackFn || goToModePick;
   app.appendChild(back);
 
   const hero = document.createElement('div'); hero.className='score-hero';
-  const pct = Math.round(state.examScore.correct/state.examScore.total*100);
-  const wrongCount = state.examScore.total - state.examScore.correct;
-  const modeLabel = state.currentMode === 'exercise' ? 'สรุปผลแบบฝึกหัด' : 'ผลสอบ';
-  hero.innerHTML = `<div class="big">${state.examScore.correct}/${state.examScore.total}</div>
-    <div class="sub">${modeLabel} — ${state.currentTopic.name_th}</div>
-    <div class="sub" style="margin-top:6px;font-weight:700">✅ ผ่าน ${state.examScore.correct} ข้อ &nbsp;•&nbsp; ❌ ไม่ผ่าน ${wrongCount} ข้อ &nbsp;•&nbsp; ${pct}%</div>`;
+  if(state.reviewIsWrongOnly){
+    hero.innerHTML = `<div class="big">${state.examScore.total}</div>
+      <div class="sub">🔍 ข้อที่ตอบผิดหรือยังไม่ตอบ${state.reviewLabel?(' — '+escapeHtml(state.reviewLabel)):''}</div>`;
+  } else {
+    const pct = Math.round(state.examScore.correct/state.examScore.total*100);
+    const wrongCount = state.examScore.total - state.examScore.correct;
+    const modeLabel = state.currentMode === 'exercise' ? 'สรุปผลแบบฝึกหัด' : 'ผลสอบ';
+    hero.innerHTML = `<div class="big">${state.examScore.correct}/${state.examScore.total}</div>
+      <div class="sub">${modeLabel} — ${state.currentTopic.name_th}</div>
+      <div class="sub" style="margin-top:6px;font-weight:700">✅ ผ่าน ${state.examScore.correct} ข้อ &nbsp;•&nbsp; ❌ ไม่ผ่าน ${wrongCount} ข้อ &nbsp;•&nbsp; ${pct}%</div>`;
+  }
   app.appendChild(hero);
 
   state.questions.forEach((q,i)=>{
@@ -1176,6 +1236,9 @@ function renderExamResult(){
     if(state.revealed[q.id]){
       if(state.revealOpen[q.id] !== false) paintExamReveal(q, ok);
       else paintExamRevealClosed(q);
+    } else if(state.reviewSkipPin){
+      state.revealed[q.id] = true;
+      paintExamReveal(q, ok);
     } else {
       const btn = document.createElement('button');
       btn.className='btn btn-primary'; btn.textContent='ดูเฉลย (ใส่รหัส)';
@@ -1362,14 +1425,21 @@ function renderParentDashboard(){
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <div style="font-weight:600;font-size:14px">${escapeHtml(t.name_th)}</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <span class="pill ${st.exercise.done>=st.exercise.total && st.exercise.total>0?'done':''}">✏️ ${st.exercise.done}/${st.exercise.total}${exAcc!==null?` · ถูก ${exAcc}%`:''}</span>
-            <span class="pill ${st.exam.done>=st.exam.total && st.exam.total>0?'done':''}">📝 ${st.exam.done}/${st.exam.total}${xmAcc!==null?` · ถูก ${xmAcc}%`:''}</span>
+            <span class="pill pill-clickable ${st.exercise.done>=st.exercise.total && st.exercise.total>0?'done':''}" data-topic="${t.id}" data-mode="exercise" data-name="${escapeHtml(t.name_th)}" title="ดูข้อที่ผิด">✏️ ${st.exercise.done}/${st.exercise.total}${exAcc!==null?` · ถูก ${exAcc}%`:''} 🔍</span>
+            <span class="pill pill-clickable ${st.exam.done>=st.exam.total && st.exam.total>0?'done':''}" data-topic="${t.id}" data-mode="exam" data-name="${escapeHtml(t.name_th)}" title="ดูข้อที่ผิด">📝 ${st.exam.done}/${st.exam.total}${xmAcc!==null?` · ถูก ${xmAcc}%`:''} 🔍</span>
             <button class="tool-btn" data-topic="${t.id}" data-name="${escapeHtml(t.name_th)}" title="ล้างค่าหัวข้อนี้" style="width:auto;padding:0 10px;font-size:12px;color:var(--bad)">ล้าง</button>
           </div>
         </div>`;
       card.appendChild(row);
     });
     app.appendChild(card);
+    card.querySelectorAll('.pill-clickable[data-topic]').forEach(pillEl=>{
+      pillEl.onclick = ()=>{
+        const mode = pillEl.dataset.mode;
+        const modeLabel = mode === 'exam' ? 'ข้อสอบจำลอง' : 'แบบฝึกหัด';
+        reviewWrongAnswers([pillEl.dataset.topic], state.parentStudent, `${pillEl.dataset.name} (${modeLabel})`, ()=>{ state.screen='parent'; render(); }, true, mode);
+      };
+    });
     card.querySelectorAll('button[data-topic]').forEach(btn=>{
       btn.onclick = async ()=>{
         if(!confirm(`ล้างคำตอบ คะแนน และกระดาษทดทั้งหมดของ "${btn.dataset.name}" สำหรับ ${state.parentStudent}?\nการลบนี้ย้อนกลับไม่ได้`)) return;
