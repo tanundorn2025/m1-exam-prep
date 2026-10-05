@@ -100,6 +100,14 @@ label{font-size:13px;color:var(--ink-soft);font-weight:600;display:block;margin-
 .subtitle{color:var(--chalk);opacity:.8;font-size:13.5px;margin-top:4px;}
 
 /* Subject grid */
+.phase-switch{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+.phase-btn{
+  flex:1;min-width:200px;font-family:'Sarabun';font-weight:700;font-size:13.5px;padding:12px 14px;
+  border-radius:12px;border:2px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:var(--chalk);
+  cursor:pointer;transition:all .15s;
+}
+.phase-btn:hover{background:rgba(255,255,255,.12);}
+.phase-btn.active{background:var(--marigold);color:var(--board-dark);border-color:var(--marigold-dark);}
 .subject-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
 @media(max-width:520px){.subject-grid{grid-template-columns:1fr;}}
 .subject-card{
@@ -272,6 +280,7 @@ let state = {
   parentStudent: null,
   parentData: null,
   reviewBackFn: null, reviewLabel: null, reviewIsWrongOnly: false, reviewSkipPin: false,
+  phase: 1, // 1 = เตรียมสอบเข้า ม.1, 2 = ป.6 ปีการศึกษา 2569
 };
 
 const app = document.getElementById('app');
@@ -358,8 +367,8 @@ async function goHome(){
   state.screen = 'loading'; render();
   try{
     const [subjects, topics] = await Promise.all([
-      sbGet('subjects?select=*&order=order_no'),
-      sbGet('topics?select=*&order=order_no'),
+      sbGet(`subjects?phase=eq.${state.phase}&select=*&order=order_no`),
+      sbGet(`topics?phase=eq.${state.phase}&select=*&order=order_no`),
     ]);
     state.subjects = subjects; state.topics = topics;
     try{ state.topicStats = Object.assign({}, state.topicStats, await fetchTopicStats(topics)); }catch(e){ /* stats are best-effort */ }
@@ -368,6 +377,13 @@ async function goHome(){
     state.screen = 'error'; state.errorMsg = e.message;
   }
   render();
+}
+
+async function switchPhase(phase){
+  if(state.phase === phase) return;
+  state.phase = phase;
+  state.topicStats = {}; // stats are phase-specific; drop the old phase's cached numbers
+  await goHome();
 }
 
 // ---------- screen renderers ----------
@@ -508,6 +524,16 @@ function renderName(){
 function renderHomeScreen(){
   const wrap = document.createElement('div');
 
+  const phaseRow = document.createElement('div'); phaseRow.className = 'phase-switch';
+  phaseRow.innerHTML = `
+    <button class="phase-btn ${state.phase===1?'active':''}" data-phase="1">🎓 เฟส 1: เตรียมสอบเข้า ม.1</button>
+    <button class="phase-btn ${state.phase===2?'active':''}" data-phase="2">📚 เฟส 2: ป.6 ปีการศึกษา 2569</button>
+  `;
+  wrap.appendChild(phaseRow);
+  phaseRow.querySelectorAll('.phase-btn').forEach(btn=>{
+    btn.onclick = ()=> switchPhase(parseInt(btn.dataset.phase, 10));
+  });
+
   // overall progress across every subject, for this student — best-effort, never blocks the page below
   try{
     let overallDone=0, overallTotal=0;
@@ -523,6 +549,14 @@ function renderHomeScreen(){
       wrap.appendChild(hero);
     }
   }catch(e){ /* progress summary is a nice-to-have; the subject grid below must still show */ }
+
+  if(state.subjects.length === 0){
+    const empty = document.createElement('div'); empty.className='empty';
+    empty.textContent = 'ยังไม่มีเนื้อหาในเฟสนี้';
+    wrap.appendChild(empty);
+    app.appendChild(wrap);
+    return;
+  }
 
   const grid = document.createElement('div');
   grid.className = 'subject-grid';
