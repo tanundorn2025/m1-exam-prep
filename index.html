@@ -1310,10 +1310,12 @@ function paintExamRevealClosed(q){
 async function openParentDashboard(){
   state.screen = 'loading'; render();
   try{
-    const [progRows, examRows, allQuestions] = await Promise.all([
+    const [progRows, examRows, allQuestions, allTopics, allSubjects] = await Promise.all([
       sbGet(`progress?select=student_name`),
       sbGet(`exam_results?select=student_name`),
       sbGet(`questions?select=id,topic_id,mode`),
+      sbGet(`topics?select=id,subject_id,name_th`),     // every phase, so names resolve for any activity
+      sbGet(`subjects?select=id,name_th`),
     ]);
     const nameSet = new Set();
     progRows.forEach(r=>nameSet.add(r.student_name));
@@ -1344,8 +1346,8 @@ async function openParentDashboard(){
           if(p.is_correct) byTopic[q.topic_id][q.mode].correct++;
         }
       });
-      const topicMap = {}; state.topics.forEach(t=>{ topicMap[t.id]=t; });
-      const subjectMap = {}; state.subjects.forEach(s=>{ subjectMap[s.id]=s; });
+      const topicMap = {}; allTopics.forEach(t=>{ topicMap[t.id]=t; });
+      const subjectMap = {}; allSubjects.forEach(s=>{ subjectMap[s.id]=s; });
       activityLog = myProgress
         .filter(p=> p.submitted_answer!==null && p.submitted_answer!==undefined && p.submitted_answer!=='' && p.updated_at)
         .map(p=>{
@@ -1362,7 +1364,7 @@ async function openParentDashboard(){
         .slice(0, 50);
       examHistory = myExams;
     }
-    state.parentData = { students, byTopic, examHistory, activityLog };
+    state.parentData = { students, byTopic, examHistory, activityLog, topicNames: Object.fromEntries(allTopics.map(t=>[t.id,t.name_th])) };
   }catch(e){
     state.parentData = { students:[studentName].filter(Boolean), byTopic:{}, examHistory:[], activityLog:[], error:e.message };
   }
@@ -1490,12 +1492,12 @@ function renderParentDashboard(){
     const histCard = document.createElement('div'); histCard.className='card';
     histCard.innerHTML = `<div class="holes"><span></span><span></span><span></span><span></span></div><h3 style="margin-bottom:10px">ประวัติการทำข้อสอบล่าสุด</h3>`;
     data.examHistory.forEach(r=>{
-      const topic = state.topics.find(t=>t.id===r.topic_id);
+      const topicName = (data.topicNames && data.topicNames[r.topic_id]) || r.topic_id;
       const d = new Date(r.created_at);
       const dateStr = d.toLocaleDateString('th-TH', {day:'numeric', month:'short', year:'2-digit'});
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--paper-line);font-size:13.5px;';
-      row.innerHTML = `<span>${escapeHtml(topic ? topic.name_th : r.topic_id)}</span><span style="color:var(--ink-soft)">${dateStr} · ${r.score}/${r.total}</span>`;
+      row.innerHTML = `<span>${escapeHtml(topicName)}</span><span style="color:var(--ink-soft)">${dateStr} · ${r.score}/${r.total}</span>`;
       histCard.appendChild(row);
     });
     app.appendChild(histCard);
