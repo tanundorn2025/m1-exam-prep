@@ -223,7 +223,7 @@ sup{font-size:.66em;font-weight:700;line-height:0}
 /* =====================================================================
    CONFIG — แก้ได้ตรงนี้
    ===================================================================== */
-var APP_VERSION = '2026-11-18.3';   // เปลี่ยนเลขนี้ทุกครั้งที่อัปโหลดไฟล์ใหม่ แอปที่เปิดอยู่จะอัปเดตตัวเองอัตโนมัติ
+var APP_VERSION = '2026-11-18.4';   // เปลี่ยนเลขนี้ทุกครั้งที่อัปโหลดไฟล์ใหม่ แอปที่เปิดอยู่จะอัปเดตตัวเองอัตโนมัติ
 var SUPABASE_DEFAULT = {
   url: "https://mbwkslgkiiqpfeqslqcu.supabase.co",
   key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id2tzbGdraWlxcGZlcXNscWN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MDMwNDEsImV4cCI6MjEwMjE3OTA0MX0.WVreyl-NVB3_uHxS4yVeDyey17YWdN99eBjcpv9YmGk"
@@ -1062,6 +1062,12 @@ function overrideRow(q,student,ctx,val){
   p.correct=!!val;
   return saveProgressRow(q,student,p).then(function(){ toast(val?'ปรับเป็น “ถูก” แล้ว':'ปรับเป็น “ผิด” แล้ว'); },function(){ toast('บันทึกไม่สำเร็จ'); });
 }
+function deleteStudent(name){
+  var q='student_name=eq.'+enc(name);
+  return Promise.all([sbDelete('progress?'+q),sbDelete('scratch_pads?'+q),sbDelete('exam_results?'+q),sbDelete('attempts?'+q).catch(function(){})]).then(function(){
+    return store.get('known_names');
+  }).then(function(l){ return store.set('known_names',(l||[]).filter(function(n){ return n!==name; })); });
+}
 function resetTopic(tid,student){
   var ids=S.qmeta.filter(function(m){ return String(m.topic_id)===String(tid); }).map(function(m){ return m.id; });
   var jobs=chunks(ids,50).map(function(c){
@@ -1100,7 +1106,7 @@ function paintDashboard(ds,ctx){
   S.topics.forEach(function(t){ (S.sets[String(t.id)]||[]).forEach(function(s){ if(isSubmitted(t.id,s,ctx)) subm++; }); });
   Object.keys(ctx.progress).forEach(function(id){ var u=ctx.progress[id].updated; if(u&&(!last||String(u)>String(last))) last=u; });
   var html='<div class="crumbs"><a href="#/home">← กลับหน้าแรก</a></div><div class="spread"><div><h2 class="page">📊 ภาพรวมผลการเรียน</h2><div class="muted small">สำหรับผู้ปกครอง / ครู</div></div>'+
-    '<div class="row no-print"><div style="min-width:200px"><select data-change="dash-student">'+S.D.students.map(function(n){ return '<option value="'+h(n)+'" '+(n===ds?'selected':'')+'>👤 '+h(n)+'</option>'; }).join('')+'</select></div><button class="btn btn-ghost" data-act="print">🖨️ พิมพ์</button></div></div><div style="height:14px"></div>';
+    '<div class="row no-print"><div style="min-width:200px"><select data-change="dash-student">'+S.D.students.map(function(n){ return '<option value="'+h(n)+'" '+(n===ds?'selected':'')+'>👤 '+h(n)+'</option>'; }).join('')+'</select></div><button class="btn btn-ghost" data-act="print">🖨️ พิมพ์</button><button class="btn btn-danger" data-act="delete-student">🗑️ ลบผู้เรียนนี้</button></div></div><div style="height:14px"></div>';
   html+='<div class="kpis"><div class="kpi"><div class="v">'+all.done+'<span class="muted" style="font-size:16px">/'+all.total+'</span></div><div class="l">ข้อที่ทำแล้ว ('+pct(all.done,all.total)+'%)</div></div>'+
     '<div class="kpi"><div class="v">'+(all.done?pct(all.correct,all.done)+'%':'—')+'</div><div class="l">ความแม่นยำรวม ('+all.correct+'/'+all.done+' ข้อ)</div></div>'+
     '<div class="kpi"><div class="v">'+subm+'</div><div class="l">ชุดข้อสอบที่ส่งแล้ว</div></div>'+
@@ -1213,6 +1219,22 @@ var actions = {
     sbUpsert('app_settings',{id:1,pin:a,updated_at:new Date().toISOString()},'id').then(function(){ S.pin=a; msg.style.color='var(--good)'; msg.textContent='บันทึกรหัสใหม่แล้ว ✓'; $('#new-pin').value=''; $('#confirm-pin').value=''; },function(e){ msg.textContent='บันทึกไม่สำเร็จ: '+e.message; });
   },
   refresh:function(){ S.catalogLoaded=false; S.qcache={}; S.D={students:null,student:S.D.student,ctx:{}}; S.dataFor=null; route(); },
+  'delete-student':function(){
+    var ds=S.D.student; if(!ds) return;
+    var ov=openDialog('<h3>🗑️ ลบผู้เรียน</h3><p>ข้อมูลทั้งหมดของ “'+h(ds)+'” (คำตอบ คะแนน ประวัติ กระดาษทด) จะถูกลบถาวร ย้อนกลับไม่ได้<br>พิมพ์ชื่อให้ตรงเพื่อยืนยัน</p><input type="text" id="del-in" style="letter-spacing:0;font-size:17px" placeholder="'+h(ds)+'" autocomplete="off"><div class="err" id="del-err"></div><div class="row"><button class="btn btn-ghost" id="del-no">ยกเลิก</button><button class="btn btn-danger" id="del-ok">ลบถาวร</button></div>');
+    $('#del-no',ov).onclick=function(){ closeDialog(ov); };
+    $('#del-ok',ov).onclick=function(){
+      if($('#del-in',ov).value.trim()!==ds){ $('#del-err',ov).textContent='ชื่อไม่ตรง'; return; }
+      $('#del-ok',ov).disabled=true; flushAll();
+      deleteStudent(ds).then(function(){
+        closeDialog(ov);
+        S.D.students=(S.D.students||[]).filter(function(n){ return n!==ds; }); delete S.D.ctx[ds]; S.D.student=null;
+        toast('ลบ “'+ds+'” เรียบร้อยแล้ว');
+        if(ds===S.student){ S.student=''; S.me={progress:{},exams:[]}; S.dataFor=null; store.set('student_name',''); nav('#/name'); }
+        else route();
+      },function(e){ $('#del-ok',ov).disabled=false; $('#del-err',ov).textContent='ลบไม่สำเร็จ: '+e.message; });
+    };
+  },
   print:function(){ window.print(); },
   'update-app':function(){ checkUpdate(true); }
 };
