@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0f3d2a">
+<meta http-equiv="Cache-Control" content="no-cache, must-revalidate">
 <title>ห้องเตรียมสอบ</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap');
@@ -222,6 +223,7 @@ sup{font-size:.66em;font-weight:700;line-height:0}
 /* =====================================================================
    CONFIG — แก้ได้ตรงนี้
    ===================================================================== */
+var APP_VERSION = '2026-11-18.3';   // เปลี่ยนเลขนี้ทุกครั้งที่อัปโหลดไฟล์ใหม่ แอปที่เปิดอยู่จะอัปเดตตัวเองอัตโนมัติ
 var SUPABASE_DEFAULT = {
   url: "https://mbwkslgkiiqpfeqslqcu.supabase.co",
   key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1id2tzbGdraWlxcGZlcXNscWN1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY2MDMwNDEsImV4cCI6MjEwMjE3OTA0MX0.WVreyl-NVB3_uHxS4yVeDyey17YWdN99eBjcpv9YmGk"
@@ -1135,7 +1137,7 @@ function paintDashboard(ds,ctx){
       return head+'<div class="list-line"><span>'+(r.p.correct?'✅':'❌')+' '+modeMeta(r.p.mode).icon+' '+h(sj.name_th||'')+' · '+h(t.name_th||'')+'</span><span class="muted" style="white-space:nowrap">'+fmtTime(r.p.updated)+' น.</span></div>';
     }).join('')+'</div>';
   }
-  html+='<div class="card no-print"><h3 style="margin-bottom:6px">🔒 เปลี่ยนรหัสผู้ตรวจ</h3><p class="note" style="margin-bottom:12px">ตัวเลข 3–6 หลัก ใช้เข้าโหมดผู้ตรวจ (ดูเฉลย/ภาพรวม/ล้างข้อมูล)</p><div class="row"><div class="grow"><label class="lb">รหัสใหม่</label><input type="password" inputmode="numeric" maxlength="6" id="new-pin"></div><div class="grow"><label class="lb">ยืนยันรหัสใหม่</label><input type="password" inputmode="numeric" maxlength="6" id="confirm-pin"></div></div><div style="height:10px"></div><div class="row"><button class="btn btn-primary" data-act="save-pin">บันทึกรหัสใหม่</button><button class="btn btn-ghost" data-act="refresh">🔄 รีเฟรชข้อมูลทั้งหมด</button></div><div class="err" id="pin-msg"></div></div>';
+  html+='<div class="card no-print"><h3 style="margin-bottom:6px">🔒 เปลี่ยนรหัสผู้ตรวจ</h3><p class="note" style="margin-bottom:12px">ตัวเลข 3–6 หลัก ใช้เข้าโหมดผู้ตรวจ (ดูเฉลย/ภาพรวม/ล้างข้อมูล)</p><div class="row"><div class="grow"><label class="lb">รหัสใหม่</label><input type="password" inputmode="numeric" maxlength="6" id="new-pin"></div><div class="grow"><label class="lb">ยืนยันรหัสใหม่</label><input type="password" inputmode="numeric" maxlength="6" id="confirm-pin"></div></div><div style="height:10px"></div><div class="row"><button class="btn btn-primary" data-act="save-pin">บันทึกรหัสใหม่</button><button class="btn btn-ghost" data-act="refresh">🔄 รีเฟรชข้อมูลทั้งหมด</button><button class="btn btn-ghost" data-act="update-app">⬆️ ตรวจอัปเดตแอป</button></div><div class="tiny muted" style="margin-top:8px">เวอร์ชันแอป '+h(APP_VERSION)+'</div><div class="err" id="pin-msg"></div></div>';
   app.innerHTML=html;
 }
 
@@ -1211,7 +1213,8 @@ var actions = {
     sbUpsert('app_settings',{id:1,pin:a,updated_at:new Date().toISOString()},'id').then(function(){ S.pin=a; msg.style.color='var(--good)'; msg.textContent='บันทึกรหัสใหม่แล้ว ✓'; $('#new-pin').value=''; $('#confirm-pin').value=''; },function(e){ msg.textContent='บันทึกไม่สำเร็จ: '+e.message; });
   },
   refresh:function(){ S.catalogLoaded=false; S.qcache={}; S.D={students:null,student:S.D.student,ctx:{}}; S.dataFor=null; route(); },
-  print:function(){ window.print(); }
+  print:function(){ window.print(); },
+  'update-app':function(){ checkUpdate(true); }
 };
 document.addEventListener('click',function(e){
   var el=e.target.closest ? e.target.closest('[data-act]') : null; if(!el) return;
@@ -1224,12 +1227,25 @@ document.addEventListener('change',function(e){
 /* =====================================================================
    init
    ===================================================================== */
+function checkUpdate(manual){
+  if(!/^https?:/.test(location.protocol)){ if(manual) toast('เปิดจากไฟล์ในเครื่อง ตรวจอัปเดตไม่ได้'); return; }
+  var base=location.origin+location.pathname;
+  fetch(base+'?_='+Date.now(),{cache:'no-store'}).then(function(r){ return r.ok?r.text():''; }).then(function(t){
+    var m=/var APP_VERSION = '([^']+)'/.exec(t);
+    if(!m||m[1]===APP_VERSION){ if(manual) toast('เป็นเวอร์ชันล่าสุดแล้ว ('+APP_VERSION+')'); return; }
+    var tried=''; try{ tried=sessionStorage.getItem('m1:upd')||''; }catch(e){}
+    if(tried===m[1] && !manual) return;                       // กันวนลูป
+    try{ sessionStorage.setItem('m1:upd',m[1]); }catch(e){}
+    toast('มีเวอร์ชันใหม่ กำลังอัปเดต…'); flushAll();
+    setTimeout(function(){ location.replace(base+'?v='+encodeURIComponent(m[1])+location.hash); },900);
+  }).catch(function(){ if(manual) toast('ตรวจอัปเดตไม่สำเร็จ (ออฟไลน์?)'); });
+}
 function init(){
   try{ var cu=+sessionStorage.getItem('m1:checkerUntil'); if(cu>Date.now()){ S.checkerUntil=cu; S.checkerWasOn=true; } }catch(e){}
   Promise.all([store.get('supabase_config'),store.get('student_name'),store.get('level')]).then(function(r){
     S.cfg=(r[0]&&r[0].url&&r[0].key)?r[0]:SUPABASE_DEFAULT; S.student=r[1]||''; if(r[2]) S.level=Number(r[2])||1;
     return sbGet('app_settings?id=eq.1&select=pin').then(function(rows){ if(rows&&rows[0]&&rows[0].pin) S.pin=String(rows[0].pin); }).catch(function(){});
-  }).then(function(){ if(!location.hash) location.hash='#/home'; route(); });
+  }).then(function(){ if(!location.hash) location.hash='#/home'; route(); checkUpdate(false); });
 }
 init();
 })();
