@@ -110,11 +110,12 @@ h2.page{font-size:24px;margin-bottom:4px}
 .setbtn{display:flex;align-items:center;gap:10px;min-height:48px;cursor:pointer;border-radius:9px}
 .setbtn .ic{font-size:24px}
 .setbtn .lbl{font-weight:700;font-size:15.5px;line-height:1.2}
-.setbtn .sub{font-size:12.5px;color:var(--ink2)}
+.setbtn .sub{font-size:13px;color:var(--ink2);line-height:1.45;display:inline-block;margin-top:2px}
 .setbtn .go{margin-left:auto;font-weight:700;font-size:13px;padding:6px 12px;border-radius:99px;background:var(--brand);color:#fff;white-space:nowrap}
 .setbtn.s-progress .go{background:var(--accent);color:#2a1d00}
 .setbtn.s-complete .go,.setbtn.s-submitted .go{background:var(--good-soft);color:var(--good)}
-.setbox .bar{margin-top:8px;height:6px}
+.setbox .bar{margin-top:8px;height:8px}
+.bar.seg3{display:flex}.bar.seg3>i{border-radius:0}.bar.seg3 .g{background:var(--good)}.bar.seg3 .r{background:var(--bad)}
 .setbox .tools{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .search{margin-bottom:12px}
 @media(max-width:620px){.t-head{flex-wrap:wrap}.t-prog{width:100%;text-align:left}}
@@ -246,6 +247,7 @@ var MODES = {
   exercise:{label:'แบบฝึกหัด',   icon:'✏️', instant:true,  order:1},
   exam:    {label:'ข้อสอบจำลอง', icon:'📝', instant:false, order:2}
 };
+var SHOW_CORRECT_TO_STUDENT = false;  // true = ให้น้องเห็นจำนวนข้อถูก/ผิดในหน้ารายการด้วย (ปกติเห็นเฉพาะโหมดผู้ตรวจ)
 var CHECKER_IDLE_MS = 10*60*1000;   // ล็อกโหมดผู้ตรวจอัตโนมัติเมื่อไม่ได้ใช้งาน
 
 /* =====================================================================
@@ -700,6 +702,16 @@ function ring(p,size,label){
   var r=(size-12)/2, c=2*Math.PI*r, off=c*(1-Math.min(100,p)/100), m=size/2;
   return '<svg class="ring" width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'"><circle class="ring-bg" cx="'+m+'" cy="'+m+'" r="'+r+'" stroke-width="9"/><circle class="ring-fg" cx="'+m+'" cy="'+m+'" r="'+r+'" stroke-width="9" stroke-dasharray="'+c.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'" transform="rotate(-90 '+m+' '+m+')"/><text x="'+m+'" y="'+(m+6)+'" text-anchor="middle" font-size="'+Math.round(size/4)+'">'+label+'</text></svg>';
 }
+function segBar(st,showC){
+  var t=st.total||1;
+  if(!showC) return bar(pct(st.done,st.total),'accent');
+  return '<div class="bar seg3"><i class="g" style="width:'+(st.correct/t*100)+'%"></i><i class="r" style="width:'+((st.done-st.correct)/t*100)+'%"></i></div>';
+}
+function statText(st,showC,submitted){
+  if(st.done===0) return st.total+' ข้อ · <b>ยังไม่ได้ทำ</b>';
+  return (submitted?'ส่งแล้ว · ':'')+'ทำแล้ว <b>'+st.done+'</b>/'+st.total+' · ยังไม่ทำ <b>'+(st.total-st.done)+'</b>'+
+    (showC?'<br><span style="color:var(--good);font-weight:700">✓ ถูก '+st.correct+'</span> · <span style="color:var(--bad);font-weight:700">✗ ผิด '+(st.done-st.correct)+'</span>':'');
+}
 function bar(p,cls){ return '<div class="bar '+(cls||'')+'"><i style="width:'+Math.min(100,p)+'%"></i></div>'; }
 function modePills(by,chk){
   return Object.keys(by).sort(function(a,b){return modeMeta(a).order-modeMeta(b).order;}).map(function(m){
@@ -762,14 +774,13 @@ function viewSubject(sid){
     var body=sets.length ? '<div class="sets">'+sets.map(function(set){
       var m=modeMeta(set.mode), stt=setStatus(t.id,set), st=stt.st, sp=pct(st.done,st.total), go, cls='s-'+stt.kind, sub;
       var href = (stt.kind==='submitted'||stt.kind==='complete') ? '#/result/'+enc(t.id)+'/'+enc(set.key) : '#/play/'+enc(t.id)+'/'+enc(set.key)+'/0';
-      if(stt.kind==='submitted'){ go='ดูผล'; sub='ส่งแล้ว · ถูก '+st.correct+'/'+st.total; }
-      else if(stt.kind==='new'){ go='เริ่ม'; sub=st.total+' ข้อ'; }
-      else if(stt.kind==='complete'){ go='ทบทวน'; sub='ครบแล้ว · ถูก '+st.correct+'/'+st.total; }
-      else { go=m.instant?'ทำต่อ':'ทำต่อ / ส่ง'; sub='ทำแล้ว '+st.done+'/'+st.total+' ข้อ'; }
-      return '<div class="setbox"><a class="setbtn '+cls+'" href="'+href+'"><span class="ic">'+m.icon+'</span><span class="grow"><span class="lbl">'+h(setLabel(set,t.id))+'</span><br><span class="sub">'+sub+'</span></span><span class="go">'+go+'</span></a>'+bar(sp,stt.kind==='progress'?'accent':'')+
+      var showC = chk || SHOW_CORRECT_TO_STUDENT || stt.kind==='submitted';
+      if(stt.kind==='submitted') go='ดูผล'; else if(stt.kind==='new') go='เริ่ม'; else if(stt.kind==='complete') go='ทบทวน'; else go=m.instant?'ทำต่อ':'ทำต่อ / ส่ง';
+      sub=statText(st,showC,stt.kind==='submitted');
+      return '<div class="setbox"><a class="setbtn '+cls+'" href="'+href+'"><span class="ic">'+m.icon+'</span><span class="grow"><span class="lbl">'+h(setLabel(set,t.id))+'</span><br><span class="sub">'+sub+'</span></span><span class="go">'+go+'</span></a>'+segBar(st,showC)+
         (chk&&st.done?'<div class="tools"><a class="btn btn-sm btn-soft" href="#/review?t='+enc(t.id)+'&set='+enc(set.key)+'&label='+enc(t.name_th+' · '+setLabel(set,t.id))+'&st='+enc(S.student)+'">🔍 ข้อที่ผิด ('+(st.done-st.correct)+')</a></div>':'')+'</div>';
     }).join('')+'</div>' : '<div class="muted small">ยังไม่มีข้อในเรื่องนี้</div>';
-    return '<div class="topic" data-name="'+h((t.name_th||'').toLowerCase())+'"><div class="t-head"><div class="num">'+(i+1)+'</div><div class="t-name grow">'+h(t.name_th)+'</div><div class="t-prog"><span class="small muted">'+a.done+'/'+a.total+' ข้อ</span>'+bar(tp)+'</div></div>'+body+'</div>';
+    return '<div class="topic" data-name="'+h((t.name_th||'').toLowerCase())+'"><div class="t-head"><div class="num">'+(i+1)+'</div><div class="t-name grow">'+h(t.name_th)+'</div><div class="t-prog"><span class="small muted">ทำแล้ว '+a.done+'/'+a.total+(chk&&a.done?' · ถูก '+a.correct:'')+'</span>'+bar(tp)+'</div></div>'+body+'</div>';
   }).join('')+'</div>';
   if(!topics.length) html+='<div class="empty card">ยังไม่มีเรื่องในวิชานี้</div>';
   app.innerHTML=html;
